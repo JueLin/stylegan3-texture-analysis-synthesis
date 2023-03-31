@@ -15,21 +15,100 @@ from typing import List, Optional, Tuple, Union
 
 from training.networks_encoder import GradualStyleEncoder
 from torchvision.utils import save_image
-from vgg import Vgg16
 
-def gram_matrix(y):
-    (b, ch, h, w) = y.size()
-    features = y.view(b, ch, w * h)
-    features_t = features.transpose(1, 2)
-    gram = features.bmm(features_t) / (ch * h * w)
-    return gram
+SCALING_FACTOR = 1
 
-def mse_loss(x, y):
-    """
-    retain the mse for each instance in a batch
-    """
-    mse = torch.square(x-y).mean(dim=[i for i in range(1, len(x.shape))])
-    return mse
+class VGG19(torch.nn.Module):
+
+    def __init__(self):
+        super(VGG19, self).__init__()
+
+        self.block1_conv1 = torch.nn.Conv2d(3, 64, (3,3), padding=(1,1), padding_mode='reflect')
+        self.block1_conv2 = torch.nn.Conv2d(64, 64, (3,3), padding=(1,1), padding_mode='reflect')
+
+        self.block2_conv1 = torch.nn.Conv2d(64, 128, (3,3), padding=(1,1), padding_mode='reflect')
+        self.block2_conv2 = torch.nn.Conv2d(128, 128, (3,3), padding=(1,1), padding_mode='reflect')
+
+        self.block3_conv1 = torch.nn.Conv2d(128, 256, (3,3), padding=(1,1), padding_mode='reflect')
+        self.block3_conv2 = torch.nn.Conv2d(256, 256, (3,3), padding=(1,1), padding_mode='reflect')
+        self.block3_conv3 = torch.nn.Conv2d(256, 256, (3,3), padding=(1,1), padding_mode='reflect')
+        self.block3_conv4 = torch.nn.Conv2d(256, 256, (3,3), padding=(1,1), padding_mode='reflect')
+
+        self.block4_conv1 = torch.nn.Conv2d(256, 512, (3,3), padding=(1,1), padding_mode='reflect')
+        self.block4_conv2 = torch.nn.Conv2d(512, 512, (3,3), padding=(1,1), padding_mode='reflect')
+        self.block4_conv3 = torch.nn.Conv2d(512, 512, (3,3), padding=(1,1), padding_mode='reflect')
+        self.block4_conv4 = torch.nn.Conv2d(512, 512, (3,3), padding=(1,1), padding_mode='reflect')
+
+        self.relu = torch.nn.ReLU(inplace=True)
+        self.downsampling = torch.nn.AvgPool2d((2,2))
+
+    def forward(self, image):
+        
+        # RGB to BGR
+        image = image[:, [2,1,0], :, :]
+
+        # [0, 1] --> [0, 255]
+        image = 255 * image
+
+        # remove average color
+        image[:,0,:,:] -= 103.939
+        image[:,1,:,:] -= 116.779
+        image[:,2,:,:] -= 123.68
+
+        # block1
+        block1_conv1 = self.relu(self.block1_conv1(image))
+        block1_conv2 = self.relu(self.block1_conv2(block1_conv1))
+        block1_pool = self.downsampling(block1_conv2)
+
+        # block2
+        block2_conv1 = self.relu(self.block2_conv1(block1_pool))
+        block2_conv2 = self.relu(self.block2_conv2(block2_conv1))
+        block2_pool = self.downsampling(block2_conv2)
+
+        # block3
+        block3_conv1 = self.relu(self.block3_conv1(block2_pool))
+        block3_conv2 = self.relu(self.block3_conv2(block3_conv1))
+        block3_conv3 = self.relu(self.block3_conv3(block3_conv2))
+        block3_conv4 = self.relu(self.block3_conv4(block3_conv3))
+        block3_pool = self.downsampling(block3_conv4)
+
+        # block4
+        block4_conv1 = self.relu(self.block4_conv1(block3_pool))
+        block4_conv2 = self.relu(self.block4_conv2(block4_conv1))
+        block4_conv3 = self.relu(self.block4_conv3(block4_conv2))
+        block4_conv4 = self.relu(self.block4_conv4(block4_conv3))
+
+        return [block1_conv1, block1_conv2, block2_conv1, block2_conv2, block3_conv1, block3_conv2, block3_conv3, block3_conv4, block4_conv1, block4_conv2, block4_conv3, block4_conv4]
+
+def slicing_loss(list_activations_generated, list_activations_example):
+    
+    # generate VGG19 activations
+    # list_activations_generated = vgg(image_generated)
+    # list_activations_example   = vgg(image_example)
+    
+    # iterate over layers
+    loss = 0
+    for l in range(len(list_activations_example)):
+        # get dimensions
+        b = list_activations_example[l].shape[0]
+        dim = list_activations_example[l].shape[1]
+        n = list_activations_example[l].shape[2]*list_activations_example[l].shape[3]
+        # linearize layer activations and duplicate example activations according to scaling factor
+        activations_example = list_activations_example[l].view(b, dim, n).repeat(1, 1, SCALING_FACTOR*SCALING_FACTOR)
+        activations_generated = list_activations_generated[l].view(b, dim, n*SCALING_FACTOR*SCALING_FACTOR)
+        # sample random directions
+        Ndirection = dim
+        directions = torch.randn(Ndirection, dim).to(torch.device("cuda:0"))
+        directions = directions / torch.sqrt(torch.sum(directions**2, dim=1, keepdim=True))
+        # project activations over random directions
+        projected_activations_example = torch.einsum('bdn,md->bmn', activations_example, directions)
+        projected_activations_generated = torch.einsum('bdn,md->bmn', activations_generated, directions)
+        # sort the projections
+        sorted_activations_example = torch.sort(projected_activations_example, dim=2)[0]
+        sorted_activations_generated = torch.sort(projected_activations_generated, dim=2)[0]
+        # L2 over sorted lists
+        loss += torch.mean( (sorted_activations_example-sorted_activations_generated)**2 ) 
+    return loss
 
 @click.command()
 @click.option('--g_path', help='generator', required=True)
@@ -60,8 +139,8 @@ def main(
         encoder.load_state_dict(ckpt["e"], strict=False) if "e" in ckpt else None
     encoder.eval()
 
-    vgg = Vgg16().to("cuda")
-    vgg.eval()  
+    vgg = VGG19().to(torch.device("cuda"))
+    vgg.load_state_dict(torch.load("vgg19.pth")) 
 
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -83,7 +162,7 @@ def main(
             image = 0.5*(1+torch.clamp(generator.synthesis(w, update_emas=False, noise_mode='const'), min=-1, max=1))
             img_filename = os.path.join(img_folder, "%05d_%05d.png"%(i, 0))
             save_image(image.clone(), img_filename)
-            features_y = vgg(image)
+            list_activations_example = vgg(image)
             w_encoder_init = encoder(2*image-1).mean(dim=1).detach()
 
         for j in range(1, samples_per_texture):
@@ -95,18 +174,12 @@ def main(
             for idx in range(20+1):
                 optimizer.zero_grad()
                 w = latent.unsqueeze(1).repeat(1, num_ws ,1)
-                image = 0.5*(1+torch.clamp(generator.synthesis(w, update_emas=False, noise_mode='const'), -1, 1))
-                features_x = vgg(image)
-                style_loss_12 = mse_loss(gram_matrix(features_y.conv1_2), gram_matrix(features_x.conv1_2))
-                style_loss_22 = mse_loss(gram_matrix(features_y.conv2_2), gram_matrix(features_x.conv2_2))
-                style_loss_33 = mse_loss(gram_matrix(features_y.conv3_3), gram_matrix(features_x.conv3_3))
-                style_loss_43 = mse_loss(gram_matrix(features_y.conv4_3), gram_matrix(features_x.conv4_3))
-                style_loss =  style_loss_12 + style_loss_22 + style_loss_33 + style_loss_43        
-                total_loss = style_weight*style_loss
-                total_loss_sum = torch.mean(total_loss)
-                total_loss_sum.backward()
+                gen_image = 0.5*(1+torch.clamp(generator.synthesis(w, update_emas=False, noise_mode='const'), -1, 1))
+                list_activations_generated = vgg(gen_image)
+                loss = slicing_loss(list_activations_generated, list_activations_example)
+                loss.backward()  
                 optimizer.step()  
-            save_image(image.clone(), img_filename)
+            save_image(gen_image.clone(), img_filename)
 
 if __name__ == "__main__":
     main()
