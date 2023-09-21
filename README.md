@@ -39,11 +39,11 @@ Pretrained models, including both generator and encoder (as describled in the pa
 Please cite the following paper if you use the provided data and/or code:
 
 ~~~bibtex
-@misc{textureRep,
-Author = {Jue Lin and Gaurav Sharma and Thrasyvoulos N. Pappas},
-Title = {Texture Representation via Analysis and Synthesis with Generative Adversarial Networks},
-Year = {2022},
-Eprint = {arXiv},
+@article{textureRep,
+author = {Jue Lin and Zhiwei Xu and Gaurav Sharma and Thrasyvoulos N. Pappas},
+title = {Texture Representation via Analysis and Synthesis with Generative Adversarial Networks},
+journal = {e-Prime - Advances in Electrical Engineering, Electronics and Energy},
+note = {accepted for publication, to appear}
 }
 ~~~
 
