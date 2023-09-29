@@ -8,11 +8,11 @@ Please refer to the Requirements section of https://github.com/NVlabs/stylegan3 
 
 ## Dataset 
 
-To be announced
+The dataset can be downloaded from https://doi.org/10.5281/zenodo.8381952
 
 ## Pretrained Model
 
-Pretrained models, including both generator and encoder (as describled in the paper) can be downloaded from [here](https://drive.google.com/file/d/1zKNcfjXvf5Shr5QkFXXs6ZDTxnv5qDcm/view?usp=share_link)
+Pretrained models, including both generator and encoder (as describled in the paper) can be downloaded from https://doi.org/10.5281/zenodo.8388272
 
 ## Train a Synthesis Model
 
@@ -43,7 +43,8 @@ Please cite the following paper if you use the provided data and/or code:
 author = {Jue Lin and Zhiwei Xu and Gaurav Sharma and Thrasyvoulos N. Pappas},
 title = {Texture Representation via Analysis and Synthesis with Generative Adversarial Networks},
 journal = {e-Prime - Advances in Electrical Engineering, Electronics and Energy},
-note = {accepted for publication, to appear}
+year={2023},
+doi={https://doi.org/10.1016/j.prime.2023.100286}
 }
 ~~~
 
